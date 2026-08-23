@@ -1,12 +1,18 @@
 """Local web app: opening explorer + game browser over the chessdb SQLite
 database. Fully server-rendered - every move/link is a plain GET - so it
-works with nothing but a browser, no client-side JS required.
+works with nothing but a browser; a small unobtrusive script adds
+keyboard-arrow navigation on the game-replay page, but every link underneath
+it works fine without JS too.
 
 Run with:
     .venv/bin/python -m chessdb.web.app [--db PATH] [--port PORT]
 
 Opens the database read-only, so it's safe to run this while an ingestion
 run is writing to the same file (SQLite WAL mode allows concurrent readers).
+
+Piece art: static/pieces/*.svg is the "Cburnett" set (CC BY-SA 3.0, by Colin
+M.L. Burnett), the same set Wikipedia and Lichess use - not a copy of any
+site's proprietary artwork.
 """
 from __future__ import annotations
 
@@ -25,39 +31,90 @@ DEFAULT_DB_PATH = REPO_ROOT / "data" / "chessdb.sqlite3"
 app = Flask(__name__)
 app.config["DB_PATH"] = DEFAULT_DB_PATH
 
-# Deliberately the *filled* glyph for every piece type, for both colors.
-# The alternative - hollow "white" glyphs (U+2654-2659) for White and filled
-# glyphs for Black - depends on fonts consistently distinguishing hollow vs
-# filled across the whole chess symbol block, which they don't (verified:
-# renders as an inconsistent mix of hollow/filled within the same rank).
-# Coloring one consistent shape via CSS is font-independent and reliable.
-PIECE_GLYPHS = {
-    "p": "♟", "n": "♞", "b": "♝", "r": "♜", "q": "♛", "k": "♚",
-}
+FILES = "abcdefgh"
 
 BASE_STYLE = """
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 860px;
-         margin: 2rem auto; padding: 0 1rem; line-height: 1.4; }
-  nav a { margin-right: 1rem; font-weight: 600; }
-  table.board { border-collapse: collapse; margin: 1rem 0; }
-  table.board td { width: 2.6rem; height: 2.6rem; text-align: center; font-size: 2.1rem;
-                    padding: 0; font-family: "Apple Symbols", "Segoe UI Symbol",
-                    "Noto Sans Symbols2", sans-serif; }
-  td.sq-light { background: #eeeed2; }
-  td.sq-dark  { background: #769656; }
-  .piece-white { color: #fbfbf7; -webkit-text-stroke: 1.25px #202020; paint-order: stroke fill;
-                 text-shadow: 0 0 2px #000a; }
-  .piece-black { color: #1a1a1a; -webkit-text-stroke: 1.25px #f5f5f0; paint-order: stroke fill;
-                 text-shadow: 0 0 2px #fffa; }
+  :root {
+    color-scheme: light dark;
+    --bg: #f0f2f5; --card: #ffffff; --text: #1b1b1f; --muted: #6b7280;
+    --border: #e2e5ea; --accent: #4a7c2f; --accent-bg: #e8f0e0;
+    --sq-light: #eeeed2; --sq-dark: #769656; --coord: #9a9a9a;
+    --highlight: #f6f669;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c; --card: #22252b; --text: #eceff2; --muted: #9aa1ab;
+      --border: #33373f; --accent: #8fce5a; --accent-bg: #2c3a22;
+      --sq-light: #eeeed2; --sq-dark: #6f9450; --coord: #7c828c;
+      --highlight: #6b6b1f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         max-width: 1100px; margin: 0 auto; padding: 0 1.25rem 3rem; line-height: 1.4;
+         background: var(--bg); color: var(--text); }
+  h1, h2 { font-weight: 700; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  nav { display: flex; gap: 1.5rem; padding: 1.25rem 0; margin-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border); }
+  nav a { font-weight: 700; color: var(--text); }
+  nav a:hover { color: var(--accent); }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  .pill { display: inline-block; padding: 0.1rem 0.6rem; border-radius: 1rem;
+          background: var(--accent-bg); color: var(--accent); font-size: 0.8rem; font-weight: 600; }
+
+  /* board */
+  .board-shell { display: inline-block; border-radius: 8px; overflow: hidden;
+                 box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+  table.board { border-collapse: collapse; background: var(--card); }
+  table.board td { width: 54px; height: 54px; padding: 0; text-align: center; vertical-align: middle; }
+  td.sq-light { background: var(--sq-light); }
+  td.sq-dark  { background: var(--sq-dark); }
+  td.coord { width: 22px; height: 54px; font-size: 0.68rem; color: var(--coord);
+             background: var(--card); }
+  td.file-row .coord, td.corner { height: 22px; width: 54px; }
+  td.corner { width: 22px; }
+  .piece { width: 84%; height: 84%; display: block; margin: 0 auto;
+           filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
+
   table.data { border-collapse: collapse; margin: 0.5rem 0 1.5rem; width: 100%; }
-  table.data th, table.data td { text-align: left; padding: 0.3rem 0.6rem; border-bottom: 1px solid #8883; }
-  table.data th { font-size: 0.85rem; opacity: 0.7; }
-  .bar { display: inline-block; height: 0.8em; vertical-align: middle; }
-  .muted { opacity: 0.65; font-size: 0.9rem; }
-  input[type=text] { padding: 0.3rem 0.5rem; }
-  .pill { display:inline-block; padding: 0.1rem 0.5rem; border-radius: 1rem; background:#8882; font-size:0.85rem; }
+  table.data th, table.data td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
+  table.data th { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.02em; }
+  input[type=text] { padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 6px;
+                      background: var(--card); color: var(--text); }
+  button { padding: 0.4rem 0.9rem; border: none; border-radius: 6px; background: var(--accent);
+           color: #fff; font-weight: 600; cursor: pointer; }
+
+  /* game replay layout */
+  .replay { display: flex; gap: 1.75rem; align-items: flex-start; flex-wrap: wrap; margin-top: 1rem; }
+  .replay .board-col { flex: 0 0 auto; }
+  .player-bar { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.1rem; }
+  .avatar { width: 2rem; height: 2rem; border-radius: 50%; background: var(--accent-bg);
+            color: var(--accent); display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 0.85rem; flex-shrink: 0; }
+  .player-name { font-weight: 700; }
+  .player-rating { color: var(--muted); font-size: 0.9rem; }
+
+  .side-col { flex: 1 1 300px; max-width: 380px; background: var(--card); border: 1px solid var(--border);
+              border-radius: 10px; padding: 1rem 1.1rem; }
+  .side-col h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
+  .move-list { max-height: 380px; overflow-y: auto; border-top: 1px solid var(--border);
+               border-bottom: 1px solid var(--border); margin-bottom: 0.9rem; }
+  .move-row { display: grid; grid-template-columns: 2.4rem 1fr 1fr; padding: 0.25rem 0; }
+  .move-row:nth-child(odd) { background: color-mix(in srgb, var(--border) 35%, transparent); }
+  .move-num { color: var(--muted); padding-left: 0.4rem; }
+  .move-row a { color: var(--text); padding: 0.1rem 0.4rem; border-radius: 4px; }
+  .move-row a.current { background: var(--highlight); color: #111; font-weight: 700; }
+
+  .nav-controls { display: flex; gap: 0.5rem; }
+  .nav-controls a { flex: 1; text-align: center; padding: 0.5rem 0; border: 1px solid var(--border);
+                     border-radius: 6px; background: var(--bg); color: var(--text); font-size: 1.1rem;
+                     font-weight: 700; }
+  .nav-controls a.disabled { opacity: 0.3; pointer-events: none; }
+  .nav-controls a:hover { border-color: var(--accent); }
+  .meta-line { margin: 0.75rem 0; }
 </style>
 """
 
@@ -66,8 +123,8 @@ NAV = f"{BASE_STYLE}<nav><a href=\"/explorer\">Opening Explorer</a><a href=\"/ga
 EXPLORER_TEMPLATE = NAV + """
 <h1>Opening Explorer</h1>
 <p class="muted">{{ opening_label }}{% if san_moves %} &middot; ply {{ san_moves|length }}{% endif %}</p>
-{{ board_html | safe }}
-<p>
+<div class="board-shell">{{ board_html | safe }}</div>
+<p class="meta-line">
   {% if san_moves %}
     <a href="{{ url_for('explorer', moves=(san_moves[:-1]|join(' '))) }}">&larr; back one move</a> &middot;
   {% endif %}
@@ -132,24 +189,67 @@ GAMES_TEMPLATE = NAV + """
 """
 
 GAME_TEMPLATE = NAV + """
-<h1>{{ game.white_name }} ({{ game.white_elo or '?' }}) vs {{ game.black_name }} ({{ game.black_elo or '?' }})</h1>
-<p class="muted">{{ game.event or '' }} &middot; {{ game.date or '' }} &middot; {{ game.result }}
+<h1>{{ game.white_name }} <span class="muted">vs</span> {{ game.black_name }}</h1>
+<p class="muted">{{ game.event or '' }} &middot; {{ game.date or '' }}
    &middot; {{ game.eco or '' }} {{ game.opening_name or '' }}</p>
-{{ board_html | safe }}
-<p>
-  <a href="{{ url_for('game_view', game_id=game.id, ply=0) }}">&laquo; start</a>
-  {% if ply > 0 %}<a href="{{ url_for('game_view', game_id=game.id, ply=ply-1) }}">&larr; prev</a>{% endif %}
-  ply {{ ply }} / {{ ply_count }}
-  {% if ply < ply_count %}<a href="{{ url_for('game_view', game_id=game.id, ply=ply+1) }}">next &rarr;</a>{% endif %}
-  <a href="{{ url_for('game_view', game_id=game.id, ply=ply_count) }}">end &raquo;</a>
-  &middot; <a href="{{ url_for('explorer', moves=moves[:ply]|join(' ')) }}">open this position in the explorer</a>
-</p>
-<p>
-  {% for san in moves %}
-  <a href="{{ url_for('game_view', game_id=game.id, ply=loop.index) }}"
-     style="{{ 'font-weight:bold' if loop.index == ply else '' }}">{{ san }}</a>{{ ' ' }}
-  {% endfor %}
-</p>
+
+<div class="replay">
+  <div class="board-col">
+    <div class="player-bar">
+      <div class="avatar">{{ game.black_name[:1] }}</div>
+      <div>
+        <div class="player-name">{{ game.black_name }}{% if game.black_title %} <span class="pill">{{ game.black_title }}</span>{% endif %}</div>
+        <div class="player-rating">{{ game.black_elo or 'unrated' }}</div>
+      </div>
+    </div>
+    <div class="board-shell">{{ board_html | safe }}</div>
+    <div class="player-bar">
+      <div class="avatar">{{ game.white_name[:1] }}</div>
+      <div>
+        <div class="player-name">{{ game.white_name }}{% if game.white_title %} <span class="pill">{{ game.white_title }}</span>{% endif %}</div>
+        <div class="player-rating">{{ game.white_elo or 'unrated' }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="side-col">
+    <h3>Result: {{ game.result }}</h3>
+    <div class="move-list" id="move-list">
+      {% for num, w, b in move_pairs %}
+      <div class="move-row">
+        <span class="move-num">{{ num }}.</span>
+        {% if w %}<a href="{{ url_for('game_view', game_id=game.id, ply=w.ply) }}"
+                      class="{{ 'current' if w.ply == ply else '' }}" id="ply-{{ w.ply }}">{{ w.san }}</a>{% else %}<span></span>{% endif %}
+        {% if b %}<a href="{{ url_for('game_view', game_id=game.id, ply=b.ply) }}"
+                      class="{{ 'current' if b.ply == ply else '' }}" id="ply-{{ b.ply }}">{{ b.san }}</a>{% else %}<span></span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="nav-controls">
+      <a href="{{ url_for('game_view', game_id=game.id, ply=0) }}" class="{{ 'disabled' if ply == 0 else '' }}" title="start">&#9198;</a>
+      <a href="{{ url_for('game_view', game_id=game.id, ply=ply-1) }}" class="{{ 'disabled' if ply == 0 else '' }}" title="prev (&larr;)">&#9664;</a>
+      <a href="{{ url_for('game_view', game_id=game.id, ply=ply+1) }}" class="{{ 'disabled' if ply == ply_count else '' }}" title="next (&rarr;)">&#9654;</a>
+      <a href="{{ url_for('game_view', game_id=game.id, ply=ply_count) }}" class="{{ 'disabled' if ply == ply_count else '' }}" title="end">&#9197;</a>
+    </div>
+    <p class="muted" style="margin-top:0.75rem">
+      ply {{ ply }} / {{ ply_count }} &middot;
+      <a href="{{ url_for('explorer', moves=moves[:ply]|join(' ')) }}">open this position in the explorer</a>
+    </p>
+  </div>
+</div>
+
+<script>
+  // Progressive enhancement only - every link above works without this.
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'INPUT') return;
+    var url = null;
+    if (e.key === 'ArrowLeft') url = {{ prev_url|tojson }};
+    if (e.key === 'ArrowRight') url = {{ next_url|tojson }};
+    if (url) { window.location.href = url; }
+  });
+  var current = document.querySelector('.move-row a.current');
+  if (current) current.scrollIntoView({ block: 'nearest' });
+</script>
 """
 
 
@@ -168,22 +268,27 @@ def close_db(exc=None):
 
 
 def render_board_html(board: chess.Board) -> str:
-    rows = []
+    """8x8 board plus a rank column (left) and file row (bottom), all as one
+    table so the coordinate labels stay pixel-aligned with the squares."""
+    rows = ['<table class="board">']
     for rank in range(7, -1, -1):
-        cells = []
+        cells = [f'<td class="coord">{rank + 1}</td>']
         for file_ in range(8):
             square = chess.square(file_, rank)
             piece = board.piece_at(square)
             css_class = "sq-light" if (file_ + rank) % 2 == 1 else "sq-dark"
+            piece_html = ""
             if piece:
-                glyph = PIECE_GLYPHS[piece.symbol().lower()]
-                piece_class = "piece-white" if piece.symbol().isupper() else "piece-black"
-                cell_html = f'<span class="{piece_class}">{glyph}</span>'
-            else:
-                cell_html = ""
-            cells.append(f'<td class="{css_class}">{cell_html}</td>')
+                color = "w" if piece.symbol().isupper() else "b"
+                src = url_for("static", filename=f"pieces/{color}{piece.symbol().upper()}.svg")
+                piece_html = f'<img class="piece" src="{src}" alt="{piece.symbol()}">'
+            cells.append(f'<td class="{css_class}">{piece_html}</td>')
         rows.append("<tr>" + "".join(cells) + "</tr>")
-    return '<table class="board">' + "".join(rows) + "</table>"
+    file_cells = ['<td class="coord corner"></td>']
+    file_cells += [f'<td class="coord">{f}</td>' for f in FILES]
+    rows.append('<tr class="file-row">' + "".join(file_cells) + "</tr>")
+    rows.append("</table>")
+    return "".join(rows)
 
 
 def parse_move_path(moves_param: str) -> tuple[chess.Board, list[str]]:
@@ -286,6 +391,16 @@ def game_view(game_id: int):
     for san in all_moves[:ply]:
         board.push_san(san)
 
+    # Pair up moves as (move_number, white_move, black_move) for a two-column list.
+    move_pairs = []
+    for i in range(0, len(all_moves), 2):
+        w = {"san": all_moves[i], "ply": i + 1}
+        b = {"san": all_moves[i + 1], "ply": i + 2} if i + 1 < len(all_moves) else None
+        move_pairs.append((i // 2 + 1, w, b))
+
+    prev_url = url_for("game_view", game_id=game_id, ply=ply - 1) if ply > 0 else None
+    next_url = url_for("game_view", game_id=game_id, ply=ply + 1) if ply < row["ply_count"] else None
+
     return render_template_string(
         GAME_TEMPLATE,
         game=row,
@@ -293,6 +408,9 @@ def game_view(game_id: int):
         ply=ply,
         ply_count=row["ply_count"],
         moves=all_moves,
+        move_pairs=move_pairs,
+        prev_url=prev_url,
+        next_url=next_url,
     )
 
 
