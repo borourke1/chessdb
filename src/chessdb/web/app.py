@@ -67,7 +67,7 @@ BASE_STYLE = """
 
   /* board */
   .board-shell { display: inline-block; border-radius: 8px; overflow: hidden;
-                 box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+                 border: 1px solid var(--border); }
   table.board { border-collapse: collapse; background: var(--card); }
   table.board td { width: 54px; height: 54px; padding: 0; text-align: center; vertical-align: middle; }
   td.sq-light { background: var(--sq-light); }
