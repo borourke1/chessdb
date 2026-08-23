@@ -81,7 +81,11 @@ BASE_STYLE = """
              background: var(--card); }
   td.file-row .coord, td.corner { height: 22px; width: 54px; }
   td.corner { width: 22px; }
-  .piece { width: 68%; height: 68%; display: block; margin: 0 auto; }
+  /* Fixed px, not %: percentage height on a replaced element inside a table
+     cell resolves inconsistently across browsers (confirmed: WebKit fell
+     back to the image's - wrongly guessed - intrinsic aspect ratio and
+     rendered it squashed). aspect-ratio is a second safety net. */
+  .piece { width: 37px; height: 37px; aspect-ratio: 1 / 1; display: block; margin: 0 auto; }
 
   table.data { border-collapse: collapse; margin: 0.5rem 0 1.5rem; width: 100%; }
   table.data th, table.data td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
