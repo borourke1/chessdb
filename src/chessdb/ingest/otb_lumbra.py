@@ -28,6 +28,7 @@ import chess.pgn
 
 from chessdb import db as chessdb_db
 from chessdb import eco as eco_mod
+from chessdb.positions import normalized_fen_key
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DB_PATH = REPO_ROOT / "data" / "chessdb.sqlite3"
@@ -82,12 +83,6 @@ def extract_7z(archive_path: Path, dest_dir: Path) -> list[Path]:
         check=True, capture_output=True,
     )
     return sorted(dest_dir.rglob("*.pgn"))
-
-
-def normalized_fen_key(board: chess.Board) -> str:
-    """Board + turn + castling + en-passant only, dropping the halfmove/
-    fullmove counters - so transpositions land on the same explorer node."""
-    return " ".join(board.fen().split(" ")[:4])
 
 
 def _int_or_none(raw: str | None) -> int | None:
