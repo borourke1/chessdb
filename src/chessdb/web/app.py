@@ -30,6 +30,11 @@ DEFAULT_DB_PATH = REPO_ROOT / "data" / "chessdb.sqlite3"
 
 app = Flask(__name__)
 app.config["DB_PATH"] = DEFAULT_DB_PATH
+# This app's static assets (piece art) have gotten edited in place under the
+# same filenames during development - default browser caching served stale
+# versions after each change. Disabling it trades a little performance for
+# never wondering again whether a fix actually reached the browser.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 FILES = "abcdefgh"
 
@@ -76,7 +81,7 @@ BASE_STYLE = """
              background: var(--card); }
   td.file-row .coord, td.corner { height: 22px; width: 54px; }
   td.corner { width: 22px; }
-  .piece { width: 84%; height: 84%; display: block; margin: 0 auto; }
+  .piece { width: 68%; height: 68%; display: block; margin: 0 auto; }
 
   table.data { border-collapse: collapse; margin: 0.5rem 0 1.5rem; width: 100%; }
   table.data th, table.data td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
