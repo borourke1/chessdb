@@ -76,8 +76,7 @@ BASE_STYLE = """
              background: var(--card); }
   td.file-row .coord, td.corner { height: 22px; width: 54px; }
   td.corner { width: 22px; }
-  .piece { width: 84%; height: 84%; display: block; margin: 0 auto;
-           filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
+  .piece { width: 84%; height: 84%; display: block; margin: 0 auto; }
 
   table.data { border-collapse: collapse; margin: 0.5rem 0 1.5rem; width: 100%; }
   table.data th, table.data td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
