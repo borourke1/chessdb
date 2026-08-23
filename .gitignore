@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# stray artifacts from a Homebrew post-install quirk in this environment
+# (unexpanded {{...}} template vars writing into cwd instead of the prefix)
+{{*}}/
+
+# downloaded/derived data - large, regenerable, not source
+data/downloads/
+data/chessdb.sqlite3
+data/chessdb.sqlite3-*
+
+# ECO reference data is small and fetched by a script, but easy to
+# regenerate too - keep it out of git to avoid churn on upstream updates
+data/eco/*.tsv
