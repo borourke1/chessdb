@@ -14,9 +14,11 @@ starting point for anyone (human or agent) picking this project back up.
      how often/with what results.
   2. Game search/browse - find and replay full games, e.g. by a specific
      famous player.
-- **Explicitly out of scope for v1**: engine evaluation (Stockfish or
-  otherwise). v1 is master-move statistics only; engine annotation is a
-  clearly separable later phase.
+  3. Live engine recommendations while replaying a game - see
+     `docs/adr/0001-live-stockfish-analysis.md`. This is additive to the
+     game-replay page only; the opening explorer stays master-move
+     statistics only, on purpose - "what masters played" and "what an
+     engine likes" are different questions.
 
 ## Data sources
 
@@ -95,7 +97,12 @@ source's players need reconciling, i.e. once online sources are added.
 3. Chess.com ingestion (official PubAPI, `/pub/titled/*` roster).
 4. Cross-source player identity linking + review queue.
 5. Local web app (opening explorer + game browser).
-6. v2, deferred: engine evaluation layer.
+6. Live Stockfish recommendation panel on the game-replay page (see ADR
+   0001) - built ahead of this original ordering, in parallel with steps
+   2-4, once the web app from step 5 existed to hang it off.
+7. v2, still deferred: full engine-annotation layer (e.g. persisted
+   evaluations, move-quality grading against master games) beyond the
+   live, ephemeral panel above.
 
 ## Known operational risks
 

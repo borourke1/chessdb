@@ -27,6 +27,12 @@ Gigabase is hosted on Mega.nz and distributed as `.7z`):
 brew install megatools p7zip
 ```
 
+The web app's live engine-recommendation panel requires Stockfish on PATH:
+
+```sh
+brew install stockfish
+```
+
 ## Running the OTB ingest
 
 ```sh
