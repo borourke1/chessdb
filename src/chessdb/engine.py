@@ -14,7 +14,12 @@ import chess
 import chess.engine
 
 STOCKFISH_PATH = shutil.which("stockfish")
-ANALYSIS_DEPTH = 25
+# Depth 25 measured at 9.6-18s per call - too slow in practice even
+# decoupled from navigation. 18 keeps every sampled position (opening
+# through tactical middlegame, at Threads=1/Hash=256 below) under ~1.3s,
+# with real margin under the 2s budget; 19 already touched 1.84s and 20
+# crossed 2s on one sample, so 18 is the safe ceiling, not just a guess.
+ANALYSIS_DEPTH = 18
 MULTIPV = 3
 PV_PLY_LIMIT = 5
 

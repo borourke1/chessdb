@@ -129,7 +129,7 @@ BASE_STYLE = """
   .nav-controls a:hover { border-color: var(--accent); }
   .meta-line { margin: 0.75rem 0; }
 
-  .engine-col { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid var(--border); }
+  .engine-col { margin-bottom: 1rem; padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); }
   .engine-line { display: flex; gap: 0.6rem; padding: 0.3rem 0; font-size: 0.88rem; }
   .engine-eval { flex: 0 0 3.6rem; font-weight: 700; color: var(--accent); }
   .engine-pv b { font-weight: 700; }
@@ -231,6 +231,11 @@ GAME_TEMPLATE = NAV + """
   </div>
 
   <div class="side-col">
+    <div class="engine-col">
+      <h3>Engine recommendations <span class="muted" style="font-weight:400">(Stockfish, depth 18)</span></h3>
+      <div id="engine-lines" class="muted">Analyzing&hellip;</div>
+    </div>
+
     <h3>Result: {{ game.result }}</h3>
     <div class="move-list" id="move-list">
       {% for num, w, b in move_pairs %}
@@ -253,11 +258,6 @@ GAME_TEMPLATE = NAV + """
       ply {{ ply }} / {{ ply_count }} &middot;
       <a href="{{ url_for('explorer', moves=moves[:ply]|join(' ')) }}">open this position in the explorer</a>
     </p>
-
-    <div class="engine-col">
-      <h3>Engine recommendations <span class="muted" style="font-weight:400">(Stockfish, depth 25)</span></h3>
-      <div id="engine-lines" class="muted">Analyzing&hellip;</div>
-    </div>
   </div>
 </div>
 
