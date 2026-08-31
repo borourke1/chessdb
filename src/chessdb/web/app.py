@@ -1,8 +1,12 @@
 """Local web app: opening explorer + game browser over the chessdb SQLite
-database. Fully server-rendered - every move/link is a plain GET - so it
-works with nothing but a browser; a small unobtrusive script adds
-keyboard-arrow navigation on the game-replay page, but every link underneath
-it works fine without JS too.
+database. Server-rendered - every move/link is a plain GET, including ply
+navigation - so it works with nothing but a browser; a small unobtrusive
+script adds keyboard-arrow navigation on the game-replay page, but every
+link underneath it works fine without JS too. The one exception is the
+game-replay page's engine-recommendation panel: it's filled in by a
+client-side fetch against /game/<id>/analysis after the page has already
+rendered, so a slow Stockfish call never delays navigation (see
+docs/adr/0001-live-stockfish-analysis.md).
 
 Run with:
     .venv/bin/python -m chessdb.web.app [--db PATH] [--port PORT]
@@ -21,8 +25,9 @@ import sqlite3
 from pathlib import Path
 
 import chess
-from flask import Flask, abort, g, render_template_string, request, url_for
+from flask import Flask, abort, g, jsonify, render_template_string, request, url_for
 
+from chessdb import engine as chessdb_engine
 from chessdb.positions import normalized_fen_key
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -123,6 +128,11 @@ BASE_STYLE = """
   .nav-controls a.disabled { opacity: 0.3; pointer-events: none; }
   .nav-controls a:hover { border-color: var(--accent); }
   .meta-line { margin: 0.75rem 0; }
+
+  .engine-col { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid var(--border); }
+  .engine-line { display: flex; gap: 0.6rem; padding: 0.3rem 0; font-size: 0.88rem; }
+  .engine-eval { flex: 0 0 3.6rem; font-weight: 700; color: var(--accent); }
+  .engine-pv b { font-weight: 700; }
 </style>
 """
 
@@ -243,6 +253,11 @@ GAME_TEMPLATE = NAV + """
       ply {{ ply }} / {{ ply_count }} &middot;
       <a href="{{ url_for('explorer', moves=moves[:ply]|join(' ')) }}">open this position in the explorer</a>
     </p>
+
+    <div class="engine-col">
+      <h3>Engine recommendations <span class="muted" style="font-weight:400">(Stockfish, depth 25)</span></h3>
+      <div id="engine-lines" class="muted">Analyzing&hellip;</div>
+    </div>
   </div>
 </div>
 
@@ -257,6 +272,30 @@ GAME_TEMPLATE = NAV + """
   });
   var current = document.querySelector('.move-row a.current');
   if (current) current.scrollIntoView({ block: 'nearest' });
+
+  // Engine panel: fetched after the page has rendered so a slow analysis
+  // never delays navigation. Ply nav is a full page reload, so any stale
+  // response can only arrive if the page has been left before it lands -
+  // the ply check below is a defensive no-op in that case, and a real
+  // guard against showing analysis for the wrong position otherwise.
+  (function () {
+    var ply = {{ ply }};
+    var container = document.getElementById('engine-lines');
+    fetch({{ url_for('game_analysis', game_id=game.id, ply=ply)|tojson }})
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ply !== ply) return;
+        if (data.error) { container.textContent = data.error; return; }
+        if (!data.lines.length) { container.textContent = 'No analysis for this position.'; return; }
+        container.innerHTML = data.lines.map(function (line) {
+          var first = line.pv[0] || '';
+          var rest = line.pv.slice(1).join(' ');
+          return '<div class="engine-line"><span class="engine-eval">' + line.eval + '</span>' +
+                 '<span class="engine-pv"><b>' + first + '</b>' + (rest ? ' ' + rest : '') + '</span></div>';
+        }).join('');
+      })
+      .catch(function () { container.textContent = 'Engine analysis unavailable.'; });
+  })();
 </script>
 """
 
@@ -297,6 +336,13 @@ def render_board_html(board: chess.Board) -> str:
     rows.append('<tr class="file-row">' + "".join(file_cells) + "</tr>")
     rows.append("</table>")
     return "".join(rows)
+
+
+def _board_at_ply(all_moves: list[str], ply: int) -> chess.Board:
+    board = chess.Board()
+    for san in all_moves[:ply]:
+        board.push_san(san)
+    return board
 
 
 def parse_move_path(moves_param: str) -> tuple[chess.Board, list[str]]:
@@ -395,9 +441,7 @@ def game_view(game_id: int):
     ply = request.args.get("ply", type=int, default=row["ply_count"])
     ply = max(0, min(ply, row["ply_count"]))
 
-    board = chess.Board()
-    for san in all_moves[:ply]:
-        board.push_san(san)
+    board = _board_at_ply(all_moves, ply)
 
     # Pair up moves as (move_number, white_move, black_move) for a two-column list.
     move_pairs = []
@@ -420,6 +464,31 @@ def game_view(game_id: int):
         prev_url=prev_url,
         next_url=next_url,
     )
+
+
+@app.route("/game/<int:game_id>/analysis")
+def game_analysis(game_id: int):
+    """Fetched client-side by the game-replay page after it has already
+    rendered - see docs/adr/0001-live-stockfish-analysis.md. Ephemeral: no
+    caching, a fresh Stockfish run per call."""
+    db = get_db()
+    row = db.execute(
+        "SELECT moves_san, ply_count FROM games WHERE id = ?", (game_id,)
+    ).fetchone()
+    if row is None:
+        abort(404)
+
+    all_moves = row["moves_san"].split()
+    ply = request.args.get("ply", type=int, default=row["ply_count"])
+    ply = max(0, min(ply, row["ply_count"]))
+    board = _board_at_ply(all_moves, ply)
+
+    try:
+        lines = chessdb_engine.analyze(board)
+    except chessdb_engine.EngineUnavailable as exc:
+        return jsonify(ply=ply, error=str(exc))
+
+    return jsonify(ply=ply, lines=lines)
 
 
 def main() -> None:
