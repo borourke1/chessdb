@@ -8,6 +8,7 @@ Requires the `stockfish` binary on PATH (`brew install stockfish`).
 """
 from __future__ import annotations
 
+import math
 import shutil
 
 import chess
@@ -35,17 +36,19 @@ class EngineUnavailable(RuntimeError):
     pass
 
 
-def analyze(board: chess.Board) -> list[dict]:
-    """Top MULTIPV ranked lines for `board`, each as
-    {"eval": "+0.32" | "#-3", "pv": ["Nf3", "Nf6", ...]} - eval is always
-    from White's point of view, PGN convention, regardless of whose turn
-    it is to move."""
+def analyze(board: chess.Board) -> dict:
+    """Top MULTIPV ranked lines for `board`, plus a win-percent estimate for
+    the vertical eval bar. Returns
+    {"lines": [{"eval": "+0.32" | "#-3", "pv": ["Nf3", "Nf6", ...]}, ...],
+     "white_percent": 63.2 | None} - eval and white_percent are always from
+    White's point of view, PGN convention, regardless of whose turn it is
+    to move. white_percent is None when the game is already over."""
     if STOCKFISH_PATH is None:
         raise EngineUnavailable(
             "stockfish not found on PATH - install with `brew install stockfish`"
         )
     if board.is_game_over():
-        return []
+        return {"lines": [], "white_percent": None}
 
     with chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH) as sf:
         sf.configure(UCI_OPTIONS)
@@ -62,13 +65,25 @@ def analyze(board: chess.Board) -> list[dict]:
             "eval": _format_score(info["score"].white()),
             "pv": _pv_to_san(board, pv[:PV_PLY_LIMIT]),
         })
-    return lines
+
+    white_percent = _white_win_percent(infos[0]["score"].white()) if infos else None
+    return {"lines": lines, "white_percent": white_percent}
 
 
 def _format_score(score: chess.engine.PovScore) -> str:
     if score.is_mate():
         return f"#{score.mate():+d}"
     return f"{score.score() / 100:+.2f}"
+
+
+def _white_win_percent(score: chess.engine.PovScore) -> float:
+    """Lichess's centipawn -> win% curve (a logistic fit to their game
+    database), for the eval bar's fill. Mate scores clamp to 0/100 since
+    the curve itself has no notion of forced mate."""
+    if score.is_mate():
+        return 100.0 if score.mate() > 0 else 0.0
+    winning_chances = 2 / (1 + math.exp(-0.00368208 * score.score())) - 1
+    return round(50 + 50 * winning_chances, 1)
 
 
 def _pv_to_san(board: chess.Board, pv: list[chess.Move]) -> list[str]:

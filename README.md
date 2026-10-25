@@ -7,10 +7,12 @@ Full design decisions and rationale: [docs/PLAN.md](docs/PLAN.md).
 
 ## Status
 
-**Phase 1 in progress**: OTB ingestion from Lumbra's Gigabase, end-to-end,
-into a local SQLite database. Lichess/Chess.com ingestion, cross-source
-player identity linking, and the web UI come after this phase is validated
-(see "Build sequencing" in the plan doc).
+**Built so far**: OTB ingestion from Lumbra's Gigabase, end-to-end, into a
+local SQLite database, plus a local web app (opening explorer, game browser,
+and game replay with a live Stockfish recommendation panel).
+
+**Still to come**: Lichess/Chess.com ingestion and cross-source player
+identity linking (see "Build sequencing" in the plan doc).
 
 ## Setup
 
@@ -51,6 +53,16 @@ sequence (`INSERT OR IGNORE`), so a re-run only adds genuinely new games.
 Pass `--skip-download` to re-process already-extracted `.pgn` files under
 `data/downloads/otb_lumbra/extracted/` without re-downloading.
 
+## Running the web app
+
+```sh
+.venv/bin/python -m chessdb.web.app
+```
+
+Serves the game browser/replay UI at http://127.0.0.1:8431. Options:
+`--port PORT` (default 8431), `--host HOST` (default `127.0.0.1`), and
+`--db PATH` (default `data/chessdb.sqlite3`).
+
 ## Layout
 
 ```
@@ -58,6 +70,7 @@ docs/PLAN.md              full design decisions
 src/chessdb/db/           SQLite schema + connection helpers
 src/chessdb/eco.py        ECO opening classification (lichess-org/chess-openings)
 src/chessdb/ingest/       per-source ingestion pipelines (otb_lumbra.py so far)
+src/chessdb/web/          Flask game browser/replay UI
 scripts/                  one-off/setup scripts
 data/                     gitignored - downloads, the sqlite db, eco reference tables
 ```
