@@ -59,10 +59,9 @@ Pass `--skip-download` to re-process already-extracted `.pgn` files under
 .venv/bin/python -m chessdb.web.app
 ```
 
-Serves the game browser/replay UI at http://127.0.0.1:5000. Options:
-`--port PORT` (default 5000; macOS's AirPlay Receiver often holds 5000, so
-use e.g. `--port 5001` if it won't bind), `--host HOST` (default
-`127.0.0.1`), and `--db PATH` (default `data/chessdb.sqlite3`).
+Serves the game browser/replay UI at http://127.0.0.1:8431. Options:
+`--port PORT` (default 8431), `--host HOST` (default `127.0.0.1`), and
+`--db PATH` (default `data/chessdb.sqlite3`).
 
 ## Layout
 

@@ -642,7 +642,8 @@ def game_analysis(game_id: int):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
-    parser.add_argument("--port", type=int, default=5000)
+    # Not Flask's usual 5000: macOS's AirPlay Receiver listens there.
+    parser.add_argument("--port", type=int, default=8431)
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
     app.config["DB_PATH"] = args.db
