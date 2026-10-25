@@ -103,6 +103,19 @@ BASE_STYLE = """
   /* game replay layout */
   .replay { display: flex; gap: 1.75rem; align-items: flex-start; flex-wrap: wrap; margin-top: 1rem; }
   .replay .board-col { flex: 0 0 auto; }
+
+  .board-row { display: flex; gap: 0.6rem; align-items: flex-start; }
+  .eval-bar-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
+  .eval-bar { width: 20px; height: 432px; /* 8 * 54px board square size */
+              border-radius: 4px; overflow: hidden; border: 1px solid var(--border);
+              display: flex; flex-direction: column; }
+  /* Fixed black/white, not theme variables - this represents which side of
+     the game is ahead, not the page's own light/dark theme, so it stays
+     black/white regardless of which theme is active (same reasoning as the
+     board's own light/dark squares already being theme-independent). */
+  .eval-bar-black { background: #1b1b1f; flex: 0 0 50%; transition: flex-basis 0.4s ease; }
+  .eval-bar-white { background: #eceff2; flex: 0 0 50%; transition: flex-basis 0.4s ease; }
+  .eval-label { font-size: 0.72rem; font-weight: 700; color: var(--muted); }
   .player-bar { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.1rem; }
   .avatar { width: 2rem; height: 2rem; border-radius: 50%; background: var(--accent-bg);
             color: var(--accent); display: flex; align-items: center; justify-content: center;
@@ -130,6 +143,13 @@ BASE_STYLE = """
   .meta-line { margin: 0.75rem 0; }
 
   .engine-col { margin-bottom: 1rem; padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); }
+  .engine-header { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0 0 0.6rem; }
+  .engine-toggle { display: flex; align-items: center; gap: 0.4rem; cursor: pointer;
+                    font-weight: 700; font-size: 0.95rem; }
+  .engine-toggle input { cursor: pointer; }
+  /* Fixed regardless of state (loading / filled / error / no-lines) so the
+     move list and nav buttons below never shift as analysis comes in. */
+  #engine-lines { min-height: 5.5rem; }
   .engine-line { display: flex; gap: 0.6rem; padding: 0.3rem 0; font-size: 0.88rem; }
   .engine-eval { flex: 0 0 3.6rem; font-weight: 700; color: var(--accent); }
   .engine-pv b { font-weight: 700; }
@@ -220,7 +240,16 @@ GAME_TEMPLATE = NAV + """
         <div class="player-rating">{{ game.black_elo or 'unrated' }}</div>
       </div>
     </div>
-    <div class="board-shell">{{ board_html | safe }}</div>
+    <div class="board-row">
+      <div class="eval-bar-wrap">
+        <div class="eval-bar">
+          <div class="eval-bar-black" id="eval-bar-black"></div>
+          <div class="eval-bar-white" id="eval-bar-white"></div>
+        </div>
+        <div class="eval-label" id="eval-label">&ndash;</div>
+      </div>
+      <div class="board-shell">{{ board_html | safe }}</div>
+    </div>
     <div class="player-bar">
       <div class="avatar">{{ game.white_name[:1] }}</div>
       <div>
@@ -232,7 +261,12 @@ GAME_TEMPLATE = NAV + """
 
   <div class="side-col">
     <div class="engine-col">
-      <h3>Engine recommendations <span class="muted" style="font-weight:400">(Stockfish, depth 18)</span></h3>
+      <h3 class="engine-header">
+        <label class="engine-toggle">
+          <input type="checkbox" id="engine-toggle" checked> Engine recommendations
+        </label>
+        <span class="muted" style="font-weight:400">(Stockfish, depth 18)</span>
+      </h3>
       <div id="engine-lines" class="muted">Analyzing&hellip;</div>
     </div>
 
@@ -276,25 +310,64 @@ GAME_TEMPLATE = NAV + """
   // Engine panel: fetched after the page has rendered so a slow analysis
   // never delays navigation. Ply nav is a full page reload, so any stale
   // response can only arrive if the page has been left before it lands -
-  // the ply check below is a defensive no-op in that case, and a real
-  // guard against showing analysis for the wrong position otherwise.
+  // the ply/toggle checks below are a defensive no-op in that case, and a
+  // real guard against showing analysis for the wrong position, or after
+  // the toggle's been switched off, otherwise.
   (function () {
     var ply = {{ ply }};
-    var container = document.getElementById('engine-lines');
-    fetch({{ url_for('game_analysis', game_id=game.id, ply=ply)|tojson }})
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (data.ply !== ply) return;
-        if (data.error) { container.textContent = data.error; return; }
-        if (!data.lines.length) { container.textContent = 'No analysis for this position.'; return; }
-        container.innerHTML = data.lines.map(function (line) {
-          var first = line.pv[0] || '';
-          var rest = line.pv.slice(1).join(' ');
-          return '<div class="engine-line"><span class="engine-eval">' + line.eval + '</span>' +
-                 '<span class="engine-pv"><b>' + first + '</b>' + (rest ? ' ' + rest : '') + '</span></div>';
-        }).join('');
-      })
-      .catch(function () { container.textContent = 'Engine analysis unavailable.'; });
+    var linesEl = document.getElementById('engine-lines');
+    var toggle = document.getElementById('engine-toggle');
+    var barBlack = document.getElementById('eval-bar-black');
+    var barWhite = document.getElementById('eval-bar-white');
+    var evalLabel = document.getElementById('eval-label');
+    var STORAGE_KEY = 'chessdb_engine_enabled';
+
+    // Toggle preference persists client-side across ply nav (each ply is a
+    // full page reload, so there's no in-page state to carry it otherwise)
+    // - no server-side persistence needed for a per-browser UI preference.
+    var stored = localStorage.getItem(STORAGE_KEY);
+    if (stored !== null) toggle.checked = stored === '1';
+
+    function setBar(whitePercent) {
+      var white = whitePercent == null ? 50 : whitePercent;
+      barWhite.style.flexBasis = white + '%';
+      barBlack.style.flexBasis = (100 - white) + '%';
+    }
+
+    function runAnalysis() {
+      linesEl.textContent = 'Analyzing…';
+      setBar(null);
+      evalLabel.textContent = '–';
+      fetch({{ url_for('game_analysis', game_id=game.id, ply=ply)|tojson }})
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.ply !== ply || !toggle.checked) return;
+          if (data.error) { linesEl.textContent = data.error; return; }
+          if (!data.lines.length) { linesEl.textContent = 'No analysis for this position.'; return; }
+          linesEl.innerHTML = data.lines.map(function (line) {
+            var first = line.pv[0] || '';
+            var rest = line.pv.slice(1).join(' ');
+            return '<div class="engine-line"><span class="engine-eval">' + line.eval + '</span>' +
+                   '<span class="engine-pv"><b>' + first + '</b>' + (rest ? ' ' + rest : '') + '</span></div>';
+          }).join('');
+          setBar(data.white_percent);
+          evalLabel.textContent = data.white_percent == null ? '–' : data.lines[0].eval;
+        })
+        .catch(function () { linesEl.textContent = 'Engine analysis unavailable.'; });
+    }
+
+    function turnOff() {
+      linesEl.textContent = 'Engine analysis is off.';
+      setBar(null);
+      evalLabel.textContent = '–';
+    }
+
+    toggle.addEventListener('change', function () {
+      localStorage.setItem(STORAGE_KEY, toggle.checked ? '1' : '0');
+      if (toggle.checked) runAnalysis(); else turnOff();
+    });
+
+    if (toggle.checked) runAnalysis(); else turnOff();
   })();
 </script>
 """
@@ -484,11 +557,11 @@ def game_analysis(game_id: int):
     board = _board_at_ply(all_moves, ply)
 
     try:
-        lines = chessdb_engine.analyze(board)
+        result = chessdb_engine.analyze(board)
     except chessdb_engine.EngineUnavailable as exc:
         return jsonify(ply=ply, error=str(exc))
 
-    return jsonify(ply=ply, lines=lines)
+    return jsonify(ply=ply, lines=result["lines"], white_percent=result["white_percent"])
 
 
 def main() -> None:
