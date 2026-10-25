@@ -16,7 +16,8 @@ run is writing to the same file (SQLite WAL mode allows concurrent readers).
 
 Piece art: static/pieces/*.svg is the "kosal" set (CC BY 4.0, by philatype),
 one of Lichess's open-licensed piece sets - not a copy of any site's
-proprietary artwork.
+proprietary artwork. static/favicon.svg is that set's white knight on a
+board-green tile.
 """
 from __future__ import annotations
 
@@ -76,37 +77,64 @@ BASE_STYLE = """
           background: var(--accent-bg); color: var(--accent); font-size: 0.8rem; font-weight: 600; }
 
   /* board */
+  /* vertical-align: top drops the descender gap an inline-block leaves below
+     its baseline, which would push the links under the board down ~5px. */
   .board-shell { display: inline-block; border-radius: 8px; overflow: hidden;
-                 border: 1px solid var(--border); }
+                 border: 1px solid var(--border); vertical-align: top; }
   table.board { border-collapse: collapse; background: var(--card); }
-  table.board td { width: 54px; height: 54px; padding: 0; text-align: center; vertical-align: middle; }
+  table.board td { width: 54px; height: 54px; padding: 0; text-align: center; vertical-align: middle;
+                    position: relative; }
   td.sq-light { background: var(--sq-light); }
   td.sq-dark  { background: var(--sq-dark); }
-  td.coord { width: 22px; height: 54px; font-size: 0.68rem; color: var(--coord);
-             background: var(--card); }
-  td.file-row .coord, td.corner { height: 22px; width: 54px; }
-  td.corner { width: 22px; }
+  /* Coordinates on the edge squares only, embedded in the board itself
+     rather than a separate rank/file row outside it: rank numbers (1-8)
+     top-left of the a-file, file letters (a-h) bottom-right of rank 1 -
+     colored with the *other* square shade for contrast. */
+  .sq-rank, .sq-file { position: absolute; font-size: 0.62rem; font-weight: 700;
+                         line-height: 1; pointer-events: none; user-select: none; }
+  .sq-rank { top: 1px; left: 2px; }
+  .sq-file { bottom: 1px; right: 3px; }
+  td.sq-light .sq-rank, td.sq-light .sq-file { color: var(--sq-dark); }
+  td.sq-dark .sq-rank, td.sq-dark .sq-file { color: var(--sq-light); }
   /* Fixed px, not %: percentage height on a replaced element inside a table
      cell resolves inconsistently across browsers (confirmed: WebKit fell
      back to the image's - wrongly guessed - intrinsic aspect ratio and
      rendered it squashed). aspect-ratio is a second safety net. */
   .piece { width: 37px; height: 37px; aspect-ratio: 1 / 1; display: block; margin: 0 auto; }
 
-  table.data { border-collapse: collapse; margin: 0.5rem 0 1.5rem; width: 100%; }
+  /* line-height: normal keeps rows compact; body's 1.4 suits prose, not
+     dense stat tables. */
+  table.data { border-collapse: collapse; margin: 0.5rem 0 1.5rem; width: 100%; line-height: normal; }
   table.data th, table.data td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
+  table.data td.nowrap { white-space: nowrap; }
+  form { margin-bottom: 1rem; }
   table.data th { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.02em; }
   input[type=text] { padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 6px;
                       background: var(--card); color: var(--text); }
   button { padding: 0.4rem 0.9rem; border: none; border-radius: 6px; background: var(--accent);
            color: #fff; font-weight: 600; cursor: pointer; }
 
-  /* game replay layout */
-  .replay { display: flex; gap: 1.75rem; align-items: flex-start; flex-wrap: wrap; margin-top: 1rem; }
-  .replay .board-col { flex: 0 0 auto; }
+  /* game replay layout - side-col is a fixed-width track so it lands flush
+     against the real right edge of the window (see the body override in
+     GAME_TEMPLATE); board-col takes all remaining space and centers a
+     bigger board in it. */
+  .replay { display: grid; grid-template-columns: 1fr 380px; gap: 1.75rem;
+            align-items: start; margin-top: 1rem; }
+  @media (max-width: 860px) {
+    .replay { grid-template-columns: 1fr; }
+  }
+  .board-col { display: flex; flex-direction: column; align-items: center; }
+  /* Bigger than the shared board-shell default (used by the opening
+     explorer too) - scoped to .board-col so only the game-replay page,
+     which now has the room, gets the larger board. Eval bar height below
+     must stay in sync with 8 * this square size. */
+  .board-col table.board td { width: 68px; height: 68px; }
+  .board-col .piece { width: 47px; height: 47px; }
+  .board-col .sq-rank, .board-col .sq-file { font-size: 0.72rem; }
 
   .board-row { display: flex; gap: 0.6rem; align-items: flex-start; }
   .eval-bar-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
-  .eval-bar { width: 20px; height: 432px; /* 8 * 54px board square size */
+  .eval-bar { width: 20px; height: 544px; /* 8 * 68px board-col square size */
               border-radius: 4px; overflow: hidden; border: 1px solid var(--border);
               display: flex; flex-direction: column; }
   /* Fixed black/white, not theme variables - this represents which side of
@@ -123,7 +151,7 @@ BASE_STYLE = """
   .player-name { font-weight: 700; }
   .player-rating { color: var(--muted); font-size: 0.9rem; }
 
-  .side-col { flex: 1 1 300px; max-width: 380px; background: var(--card); border: 1px solid var(--border);
+  .side-col { max-width: 380px; background: var(--card); border: 1px solid var(--border);
               border-radius: 10px; padding: 1rem 1.1rem; }
   .side-col h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
   .move-list { max-height: 380px; overflow-y: auto; border-top: 1px solid var(--border);
@@ -156,7 +184,17 @@ BASE_STYLE = """
 </style>
 """
 
-NAV = f"{BASE_STYLE}<nav><a href=\"/explorer\">Opening Explorer</a><a href=\"/games\">Browse Games</a></nav>"
+# Every view passes page_title; the tab reads "<page_title> · chessdb".
+HEAD = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ page_title }} &middot; chessdb</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+""" + BASE_STYLE + "</head>\n<body>\n"
+
+NAV = HEAD + "<nav><a href=\"/explorer\">Opening Explorer</a><a href=\"/games\">Browse Games</a></nav>"
 
 EXPLORER_TEMPLATE = NAV + """
 <h1>Opening Explorer</h1>
@@ -207,7 +245,7 @@ GAMES_TEMPLATE = NAV + """
 <p class="muted">{{ total }} games in the database.</p>
 <form method="get">
   <input type="text" name="player" placeholder="player name" value="{{ player }}">
-  <input type="text" name="eco" placeholder="ECO code, e.g. B90" value="{{ eco }}" size="8">
+  <input type="text" name="eco" placeholder="ECO code, e.g. B90" value="{{ eco }}" size="18">
   <button type="submit">Search</button>
 </form>
 <table class="data">
@@ -217,7 +255,7 @@ GAMES_TEMPLATE = NAV + """
     <td><a href="{{ url_for('game_view', game_id=gm.id) }}">{{ gm.white_name }} ({{ gm.white_elo or '?' }})</a></td>
     <td>{{ gm.black_name }} ({{ gm.black_elo or '?' }})</td>
     <td>{{ gm.result }}</td>
-    <td>{{ gm.date or '' }}</td>
+    <td class="nowrap">{{ gm.date or '' }}</td>
     <td>{{ gm.eco or '' }}</td>
     <td>{{ gm.opening_name or '' }}</td>
   </tr>
@@ -227,6 +265,12 @@ GAMES_TEMPLATE = NAV + """
 """
 
 GAME_TEMPLATE = NAV + """
+<style>
+  /* This page only: drop the shared centered-column cap so the side panel
+     can sit flush against the real right edge of the window, with the
+     board given the freed-up space instead of empty margin. */
+  body { max-width: none; padding: 0 0 3rem 1.5rem; }
+</style>
 <h1>{{ game.white_name }} <span class="muted">vs</span> {{ game.black_name }}</h1>
 <p class="muted">{{ game.event or '' }} &middot; {{ game.date or '' }}
    &middot; {{ game.eco or '' }} {{ game.opening_name or '' }}</p>
@@ -388,25 +432,29 @@ def close_db(exc=None):
 
 
 def render_board_html(board: chess.Board) -> str:
-    """8x8 board plus a rank column (left) and file row (bottom), all as one
-    table so the coordinate labels stay pixel-aligned with the squares."""
+    """8x8 board with coordinates on the edge squares only, embedded in the
+    board itself rather than a separate rank/file row: rank numbers (1-8)
+    on the a-file, file letters (a-h) on rank 1 - a1 gets both, in
+    different corners, since it's on both edges."""
     rows = ['<table class="board">']
     for rank in range(7, -1, -1):
-        cells = [f'<td class="coord">{rank + 1}</td>']
+        cells = []
         for file_ in range(8):
             square = chess.square(file_, rank)
             piece = board.piece_at(square)
             css_class = "sq-light" if (file_ + rank) % 2 == 1 else "sq-dark"
+            labels = ""
+            if file_ == 0:
+                labels += f'<span class="sq-rank">{rank + 1}</span>'
+            if rank == 0:
+                labels += f'<span class="sq-file">{FILES[file_]}</span>'
             piece_html = ""
             if piece:
                 color = "w" if piece.symbol().isupper() else "b"
                 src = url_for("static", filename=f"pieces/{color}{piece.symbol().upper()}.svg")
                 piece_html = f'<img class="piece" src="{src}" alt="{piece.symbol()}">'
-            cells.append(f'<td class="{css_class}">{piece_html}</td>')
+            cells.append(f'<td class="{css_class}">{labels}{piece_html}</td>')
         rows.append("<tr>" + "".join(cells) + "</tr>")
-    file_cells = ['<td class="coord corner"></td>']
-    file_cells += [f'<td class="coord">{f}</td>' for f in FILES]
-    rows.append('<tr class="file-row">' + "".join(file_cells) + "</tr>")
     rows.append("</table>")
     return "".join(rows)
 
@@ -472,6 +520,7 @@ def explorer():
 
     return render_template_string(
         EXPLORER_TEMPLATE,
+        page_title=opening_label if san_moves else "Opening Explorer",
         board_html=render_board_html(board),
         san_moves=san_moves,
         next_moves=next_moves,
@@ -500,7 +549,9 @@ def games_list():
 
     rows = db.execute(query, params).fetchall()
     total = db.execute("SELECT COUNT(*) FROM games").fetchone()[0]
-    return render_template_string(GAMES_TEMPLATE, rows=rows, player=player, eco=eco, total=total)
+    return render_template_string(
+        GAMES_TEMPLATE, page_title="Browse Games", rows=rows, player=player, eco=eco, total=total
+    )
 
 
 @app.route("/game/<int:game_id>")
@@ -528,6 +579,7 @@ def game_view(game_id: int):
 
     return render_template_string(
         GAME_TEMPLATE,
+        page_title=f"{row['white_name']} vs {row['black_name']}",
         game=row,
         board_html=render_board_html(board),
         ply=ply,
