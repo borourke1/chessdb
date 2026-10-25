@@ -14,9 +14,9 @@ Run with:
 Opens the database read-only, so it's safe to run this while an ingestion
 run is writing to the same file (SQLite WAL mode allows concurrent readers).
 
-Piece art: static/pieces/*.svg is the "Cburnett" set (CC BY-SA 3.0, by Colin
-M.L. Burnett), the same set Wikipedia and Lichess use - not a copy of any
-site's proprietary artwork.
+Piece art: static/pieces/*.svg is the "kosal" set (CC BY 4.0, by philatype),
+one of Lichess's open-licensed piece sets - not a copy of any site's
+proprietary artwork.
 """
 from __future__ import annotations
 
