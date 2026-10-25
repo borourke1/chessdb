@@ -348,8 +348,19 @@ GAME_TEMPLATE = NAV + """
     if (e.key === 'ArrowRight') url = {{ next_url|tojson }};
     if (url) { window.location.href = url; }
   });
+  // Scroll only the move list, not the window: scrollIntoView would also
+  // scroll the page itself whenever the list sits below the fold (short
+  // windows, or the stacked narrow layout), pushing the board off-screen.
   var current = document.querySelector('.move-row a.current');
-  if (current) current.scrollIntoView({ block: 'nearest' });
+  var moveList = document.getElementById('move-list');
+  if (current && moveList) {
+    // rowTop, not top: this runs at global scope, where `var top` would
+    // collide with the read-only window.top and silently stay the window.
+    var rowTop = current.getBoundingClientRect().top - moveList.getBoundingClientRect().top + moveList.scrollTop;
+    var rowBottom = rowTop + current.offsetHeight;
+    if (rowTop < moveList.scrollTop) moveList.scrollTop = rowTop;
+    else if (rowBottom > moveList.scrollTop + moveList.clientHeight) moveList.scrollTop = rowBottom - moveList.clientHeight;
+  }
 
   // Engine panel: fetched after the page has rendered so a slow analysis
   // never delays navigation. Ply nav is a full page reload, so any stale
