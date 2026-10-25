@@ -522,11 +522,23 @@ def explorer():
         opening_label = f"{eco_row['eco']} — {eco_row['name']}" if eco_row else line
 
     line = " ".join(san_moves)
+    # Games whose moves_san is exactly `line` or starts with `line + " "`,
+    # as a range on idx_games_moves rather than LIKE: LIKE is
+    # case-insensitive, so SQLite can't serve it from a plain index and
+    # falls back to a full table scan (~10s on the full database). '!' is
+    # the character right after ' ', so [line, line + "!") is precisely
+    # that prefix set. The starting position matches every game, but still
+    # goes through the index (moves_san >= '' is always true) - with no
+    # WHERE at all, SQLite sorts by rating with a full table scan instead.
+    if san_moves:
+        where, params = "WHERE moves_san >= ? AND moves_san < ?", (line, line + "!")
+    else:
+        where, params = "WHERE moves_san >= ?", ("",)
     sample_games = db.execute(
-        """SELECT id, white_name, black_name, white_elo, black_elo, result, date, event
-           FROM games WHERE moves_san = ? OR moves_san LIKE ?
-           ORDER BY (COALESCE(white_elo,0) + COALESCE(black_elo,0)) DESC LIMIT 8""",
-        (line, line + " %"),
+        f"""SELECT id, white_name, black_name, white_elo, black_elo, result, date, event
+            FROM games {where}
+            ORDER BY (COALESCE(white_elo,0) + COALESCE(black_elo,0)) DESC, id LIMIT 8""",
+        params,
     ).fetchall()
 
     return render_template_string(

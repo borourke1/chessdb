@@ -35,6 +35,10 @@ CREATE INDEX IF NOT EXISTS idx_games_white ON games(white_name);
 CREATE INDEX IF NOT EXISTS idx_games_black ON games(black_name);
 CREATE INDEX IF NOT EXISTS idx_games_eco ON games(eco);
 CREATE INDEX IF NOT EXISTS idx_games_date ON games(date);
+-- Explorer's sample-games lookup: a prefix range scan on moves_san (games
+-- whose move sequence starts with the explored line), with the elo columns
+-- included so ranking by rating reads only the index, not the table rows.
+CREATE INDEX IF NOT EXISTS idx_games_moves ON games(moves_san, white_elo, black_elo);
 
 CREATE TABLE IF NOT EXISTS opening_positions (
     fen_key         TEXT PRIMARY KEY,        -- board+turn+castling+ep fields of FEN only
