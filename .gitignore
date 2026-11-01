@@ -15,3 +15,6 @@ data/chessdb.sqlite3-*
 # ECO reference data is small and fetched by a script, but easy to
 # regenerate too - keep it out of git to avoid churn on upstream updates
 data/eco/*.tsv
+
+# scheduled-ingest logs
+data/logs/
