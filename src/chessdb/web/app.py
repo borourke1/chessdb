@@ -500,11 +500,15 @@ def explorer():
            FROM opening_moves WHERE from_fen_key = ? ORDER BY game_count DESC""",
         (fen_key,),
     ).fetchall()
+    # Distinct games that reached this position - not the sum of the move
+    # counts below (see opening_positions.game_count in schema.sql).
+    position = db.execute(
+        "SELECT game_count FROM opening_positions WHERE fen_key = ?", (fen_key,)
+    ).fetchone()
+    total_games = position["game_count"] if position else 0
     next_moves = []
-    total_games = 0
     for r in move_rows:
         gc = r["game_count"]
-        total_games += gc
         next_moves.append({
             "move_san": r["move_san"],
             "game_count": gc,

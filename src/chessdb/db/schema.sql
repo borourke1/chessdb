@@ -42,7 +42,12 @@ CREATE INDEX IF NOT EXISTS idx_games_moves ON games(moves_san, white_elo, black_
 
 CREATE TABLE IF NOT EXISTS opening_positions (
     fen_key         TEXT PRIMARY KEY,        -- board+turn+castling+ep fields of FEN only
-    ply             INTEGER NOT NULL
+    ply             INTEGER NOT NULL,
+    game_count      INTEGER NOT NULL DEFAULT 0  -- distinct games reaching this position
+                                              -- (within MAX_OPENING_PLY), counted once per game
+                                              -- even if it recurs; not the sum of opening_moves
+                                              -- counts, which double-counts a game leaving by two
+                                              -- different moves and misses games ending here
 );
 
 CREATE TABLE IF NOT EXISTS opening_moves (
