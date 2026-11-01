@@ -110,12 +110,27 @@ def _normalize_date(raw: str | None) -> str | None:
 
 
 def _update_opening_tree(conn, san_moves: list[str], result: str | None) -> None:
+    # A game can revisit a position and replay a move from it (a repetition,
+    # or e.g. 1.Nf3 Nf6 2.Ng1 Ng8 back to the start), so both positions and
+    # (position, move) pairs are counted at most once per game - each
+    # game_count means "games that reached this position" / "games that
+    # played this move here", not how many times either happened.
+    reached: set[str] = set()
+    counted: set[tuple[str, str]] = set()
+
+    def reach(key: str, ply: int) -> None:
+        if key in reached:
+            return
+        reached.add(key)
+        conn.execute(
+            """INSERT INTO opening_positions (fen_key, ply, game_count) VALUES (?, ?, 1)
+               ON CONFLICT(fen_key) DO UPDATE SET game_count = game_count + 1""",
+            (key, ply),
+        )
+
     board = chess.Board()
     from_key = normalized_fen_key(board)
-    conn.execute(
-        "INSERT OR IGNORE INTO opening_positions (fen_key, ply) VALUES (?, 0)",
-        (from_key,),
-    )
+    reach(from_key, 0)
     white_win = 1 if result == "1-0" else 0
     black_win = 1 if result == "0-1" else 0
     draw = 1 if result == "1/2-1/2" else 0
@@ -124,10 +139,11 @@ def _update_opening_tree(conn, san_moves: list[str], result: str | None) -> None
         move = board.parse_san(san)
         board.push(move)
         to_key = normalized_fen_key(board)
-        conn.execute(
-            "INSERT OR IGNORE INTO opening_positions (fen_key, ply) VALUES (?, ?)",
-            (to_key, ply),
-        )
+        reach(to_key, ply)
+        if (from_key, san) in counted:
+            from_key = to_key
+            continue
+        counted.add((from_key, san))
         conn.execute(
             """INSERT INTO opening_moves
                    (from_fen_key, move_san, to_fen_key, game_count, white_wins, black_wins, draws)
