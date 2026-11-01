@@ -120,6 +120,11 @@ def _update_opening_tree(conn, san_moves: list[str], result: str | None) -> None
     black_win = 1 if result == "0-1" else 0
     draw = 1 if result == "1/2-1/2" else 0
 
+    # A game can play the same move from the same position more than once
+    # (a repetition, or e.g. 1.Nf3 Nf6 2.Ng1 Ng8 back to the start), so
+    # count each (position, move) at most once per game - game_count means
+    # "games that played this move here", not "times it was played".
+    counted: set[tuple[str, str]] = set()
     for ply, san in enumerate(san_moves[:MAX_OPENING_PLY], start=1):
         move = board.parse_san(san)
         board.push(move)
@@ -128,6 +133,10 @@ def _update_opening_tree(conn, san_moves: list[str], result: str | None) -> None
             "INSERT OR IGNORE INTO opening_positions (fen_key, ply) VALUES (?, ?)",
             (to_key, ply),
         )
+        if (from_key, san) in counted:
+            from_key = to_key
+            continue
+        counted.add((from_key, san))
         conn.execute(
             """INSERT INTO opening_moves
                    (from_fen_key, move_san, to_fen_key, game_count, white_wins, black_wins, draws)
