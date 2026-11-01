@@ -1,17 +1,20 @@
-"""Download, extract, and load Lumbra's Gigabase OTB "Elite (ELO > 2400)"
-file into the chessdb SQLite database.
+"""Extract and load Lumbra's Gigabase OTB "Elite (ELO > 2400)" file into the
+chessdb SQLite database.
 
 Deliberately uses the Elite file, not "OTB Complete": Lumbra's Complete file
 carries no rating filter at all (confirmed on the site - only Elite is
 pre-filtered by strength), so it's the only variant that actually matches
 this project's "master and above" scope. See docs/PLAN.md.
 
-The file is hosted on Mega.nz (not a plain HTTP file server), so downloading
-it requires `megatools` (install via `brew install megatools`). Extraction
-requires `7z` (`brew install p7zip`).
+The archive is downloaded by hand in a browser: the site's download page
+gates each download behind a proof-of-work challenge meant to deter scripted
+downloads, so this module does not fetch it. Save the `.7z` into
+data/downloads/otb_lumbra/ - the newest `.7z` there is ingested by default,
+and the scheduled job (chessdb.ingest.scheduled) picks it up automatically.
+Extraction requires `7z` (`brew install p7zip`).
 
 Usage:
-    python -m chessdb.ingest.otb_lumbra [--db PATH] [--skip-download]
+    python -m chessdb.ingest.otb_lumbra [--db PATH] [--archive PATH] [--skip-extract]
 """
 from __future__ import annotations
 
@@ -36,52 +39,36 @@ DOWNLOAD_DIR = REPO_ROOT / "data" / "downloads" / "otb_lumbra"
 EXTRACT_DIR = DOWNLOAD_DIR / "extracted"
 ECO_DIR = REPO_ROOT / "data" / "eco"
 
-# Lumbra's WordPress-Download-Manager page for the Elite (ELO > 2400) file.
-# The wpdmdl id is stable across the file's monthly re-releases; the mega.nz
-# link it redirects to is resolved fresh each run since it can change.
-LUMBRA_ELITE_WPDM_URL = "https://lumbrasgigabase.com/download/otb-elite-elo-2400/?wpdmdl=10343"
+LUMBRA_DOWNLOAD_PAGE = "https://lumbrasgigabase.com/en/download-area-en/"
 
 SOURCE_NAME = "otb_lumbra"
 MAX_OPENING_PLY = 40  # 20 full moves/side - beyond this, positions are rarely shared "theory"
 
 
-def resolve_mega_link(wpdm_url: str) -> str:
-    """Follow Lumbra's download-page redirect to today's mega.nz link."""
-    result = subprocess.run(
-        [
-            "curl", "-sD", "-", "-o", "/dev/null", "--max-time", "30",
-            "-H", "Range: bytes=0-100",
-            "-A", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            wpdm_url,
-        ],
-        capture_output=True, text=True, check=True,
-    )
-    for line in result.stdout.splitlines():
-        if line.lower().startswith("location:"):
-            return line.split(":", 1)[1].strip()
-    raise RuntimeError(f"no redirect found for {wpdm_url}; site layout may have changed")
+def _utc_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
 
-def download_via_mega(mega_link: str, dest_dir: Path) -> Path:
-    if shutil.which("megatools") is None:
-        raise RuntimeError("megatools not found - install with `brew install megatools`")
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    before = set(dest_dir.glob("*"))
-    subprocess.run(["megatools", "dl", "--path", str(dest_dir), mega_link], check=True)
-    new_files = sorted(set(dest_dir.glob("*")) - before, key=lambda p: p.stat().st_mtime)
-    if not new_files:
-        raise RuntimeError("megatools reported success but produced no new file")
-    return new_files[-1]
+def newest_archive(download_dir: Path | None = None) -> Path | None:
+    """The most recently modified .7z in the download dir, if any."""
+    archives = sorted((download_dir or DOWNLOAD_DIR).glob("*.7z"), key=lambda p: p.stat().st_mtime)
+    return archives[-1] if archives else None
 
 
 def extract_7z(archive_path: Path, dest_dir: Path) -> list[Path]:
     if shutil.which("7z") is None:
         raise RuntimeError("7z not found - install with `brew install p7zip`")
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    # Clear last month's extraction so a renamed .pgn inside the new archive
+    # doesn't get ingested alongside the stale one.
+    shutil.rmtree(dest_dir, ignore_errors=True)
+    dest_dir.mkdir(parents=True)
+    result = subprocess.run(
         ["7z", "x", f"-o{dest_dir}", "-y", str(archive_path)],
-        check=True, capture_output=True,
+        capture_output=True, text=True,
     )
+    if result.returncode != 0:
+        detail = [l.strip() for l in (result.stderr or result.stdout).splitlines() if l.strip()][-3:]
+        raise RuntimeError(f"7z could not extract {archive_path.name}: {' '.join(detail)}")
     return sorted(dest_dir.rglob("*.pgn"))
 
 
@@ -203,7 +190,7 @@ def ingest_pgn_file(
                     headers.get("Result"),
                     eco, opening_name,
                     len(san_moves), moves_san, content_hash,
-                    dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                    _utc_now(),
                 ),
             )
             if cur.rowcount == 0:
@@ -221,7 +208,13 @@ def ingest_pgn_file(
     return games_read, games_inserted, games_duplicate
 
 
-def run(db_path: Path, skip_download: bool) -> None:
+def run(db_path: Path, archive: Path | None, skip_extract: bool) -> tuple[int, int, int]:
+    """Ingest one archive. Returns (games_read, games_inserted, games_duplicate).
+
+    The ingest_runs row is written before extraction, so a failed or
+    interrupted attempt is still recorded - the scheduled job relies on that
+    to avoid retrying the same broken archive on every trigger.
+    """
     conn = chessdb_db.connect(db_path)
     chessdb_db.init_schema(conn)
 
@@ -233,44 +226,47 @@ def run(db_path: Path, skip_download: bool) -> None:
         n = eco_mod.load_eco_openings(conn, ECO_DIR)
         print(f"Loaded {n:,} reference opening lines into eco_openings", file=sys.stderr)
 
-    pgn_files = sorted(EXTRACT_DIR.rglob("*.pgn")) if skip_download else []
-    if not pgn_files:
-        print("Resolving current download link from lumbrasgigabase.com ...", file=sys.stderr)
-        mega_link = resolve_mega_link(LUMBRA_ELITE_WPDM_URL)
-        print(f"  -> {mega_link}", file=sys.stderr)
-
-        print("Downloading via megatools (this is a ~125MB file) ...", file=sys.stderr)
-        archive_path = download_via_mega(mega_link, DOWNLOAD_DIR)
-        print(f"  -> {archive_path}", file=sys.stderr)
-
-        print("Extracting ...", file=sys.stderr)
-        pgn_files = extract_7z(archive_path, EXTRACT_DIR)
-
-    if not pgn_files:
-        raise RuntimeError("no .pgn files found after extraction")
+    if not skip_extract:
+        archive = archive or newest_archive()
+        if archive is None:
+            raise RuntimeError(
+                f"no .7z archive in {DOWNLOAD_DIR} - download the OTB Elite file from "
+                f"{LUMBRA_DOWNLOAD_PAGE} and save it there"
+            )
 
     run_id = conn.execute(
         """INSERT INTO ingest_runs (source, source_file, started_at, status)
            VALUES (?, ?, ?, 'running')""",
-        (SOURCE_NAME, ",".join(p.name for p in pgn_files),
-         dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")),
+        # Microsecond precision: the scheduled job decides "already attempted"
+        # by comparing this against the archive's mtime, and launchd starts
+        # it within the same second the download lands.
+        (SOURCE_NAME, "extracted" if skip_extract else archive.name,
+         dt.datetime.now(dt.timezone.utc).isoformat()),
     ).lastrowid
     conn.commit()
 
-    eco_index = eco_mod.build_eco_index(conn)
-
     total_read = total_inserted = total_duplicate = 0
     try:
+        if skip_extract:
+            pgn_files = sorted(EXTRACT_DIR.rglob("*.pgn"))
+        else:
+            print(f"Extracting {archive} ...", file=sys.stderr)
+            pgn_files = extract_7z(archive, EXTRACT_DIR)
+        if not pgn_files:
+            raise RuntimeError(f"no .pgn files found under {EXTRACT_DIR}")
+
+        eco_index = eco_mod.build_eco_index(conn)
         for pgn_path in pgn_files:
             print(f"Ingesting {pgn_path} ...", file=sys.stderr)
             read, inserted, duplicate = ingest_pgn_file(conn, pgn_path, SOURCE_NAME, eco_index)
             total_read += read
             total_inserted += inserted
             total_duplicate += duplicate
-    except Exception:
+    except BaseException:
+        conn.rollback()
         conn.execute(
             "UPDATE ingest_runs SET status = 'failed', finished_at = ? WHERE id = ?",
-            (dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), run_id),
+            (_utc_now(), run_id),
         )
         conn.commit()
         raise
@@ -279,10 +275,7 @@ def run(db_path: Path, skip_download: bool) -> None:
         """UPDATE ingest_runs
            SET finished_at = ?, games_read = ?, games_inserted = ?, games_duplicate = ?, status = 'ok'
            WHERE id = ?""",
-        (
-            dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-            total_read, total_inserted, total_duplicate, run_id,
-        ),
+        (_utc_now(), total_read, total_inserted, total_duplicate, run_id),
     )
     conn.commit()
 
@@ -291,17 +284,22 @@ def run(db_path: Path, skip_download: bool) -> None:
         f"skipped {total_duplicate:,} duplicates.",
         file=sys.stderr,
     )
+    return total_read, total_inserted, total_duplicate
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help="Path to the SQLite database")
     parser.add_argument(
-        "--skip-download", action="store_true",
-        help="Reuse already-extracted .pgn files under data/downloads/otb_lumbra/extracted/",
+        "--archive", type=Path,
+        help=f"The .7z to ingest (default: the newest .7z in {DOWNLOAD_DIR})",
+    )
+    parser.add_argument(
+        "--skip-extract", action="store_true",
+        help="Re-process already-extracted .pgn files under data/downloads/otb_lumbra/extracted/",
     )
     args = parser.parse_args()
-    run(args.db, args.skip_download)
+    run(args.db, args.archive, args.skip_extract)
 
 
 if __name__ == "__main__":

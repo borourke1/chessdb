@@ -45,15 +45,26 @@ an acceptable gap vs. the false-match risk of fuzzy FIDE cross-referencing).
 ## Freshness
 
 - Ingestion runs **monthly**, for both OTB and online sources (Lumbra's
-  itself only updates monthly, on the first Tuesday, so more frequent OTB
+  itself only updates monthly, early in the month, so more frequent OTB
   polling buys nothing; online sources are pinned to the same cadence purely
   to keep one pipeline schedule instead of two).
-- Runs via **local-only cron/launchd** on this machine. This is a personal,
-  best-effort tool - if the machine is off when a run is due, that month is
-  simply skipped, not backfilled specially.
-- **Failure handling**: a native macOS notification (`osascript`) fires if a
-  monthly run fails, so silent staleness doesn't go unnoticed. No email/cloud
-  infra.
+- Runs via **local-only launchd agents** on this machine
+  (`scripts/install_schedule.sh`). This is a personal, best-effort tool - if
+  the machine is off when a run is due, it simply catches up the next time a
+  job fires, with no special backfill.
+- **OTB is semi-automatic**: since late 2026 Lumbra's download page gates each
+  download behind a browser proof-of-work challenge, there to deter scripted
+  downloads. Rather than work around that, a daily reminder (from the 10th of
+  the month, until that month has a successful ingest) asks for a manual
+  browser download into `data/downloads/otb_lumbra/`; a launchd `WatchPaths`
+  job ingests the file as soon as it lands. Worth asking the site owner
+  whether a scripted monthly pull would be acceptable, which would let this
+  go back to fully automatic.
+- **Failure handling**: a native macOS alert (`osascript display alert`)
+  reports every scheduled ingest's outcome, including failures, so silent
+  staleness doesn't go unnoticed. Modal alerts rather than Notification
+  Center banners: banners from `osascript` aren't reliably shown and are
+  easy to miss. No email/cloud infra.
 
 ## Architecture
 
@@ -106,12 +117,11 @@ source's players need reconciling, i.e. once online sources are added.
 
 ## Known operational risks
 
-- **Lumbra's Gigabase files are hosted on Mega.nz**, not a plain HTTP file
-  server. Automated download requires `megatools` (installed via Homebrew).
-  Mega's free/anonymous tier has bandwidth quotas shared across all
-  anonymous downloaders hitting the same IP - a monthly automated pull could
-  intermittently fail for reasons outside our control. This is exactly what
-  the failure-notification step exists to catch.
+- **Lumbra's download mechanism changes without notice.** It moved from a
+  WordPress Download Manager redirect to Mega.nz, to its own plugin with a
+  proof-of-work gate and a new file host (late 2026). The manual download
+  step absorbs most of this; the remaining coupling is the archive format
+  (`.7z` containing `.pgn`), which the ingest checks and alerts on.
 - Chess.com's ToS has changed once already in 2026 (added an explicit
   anti-AI-dataset clause); worth a periodic manual re-read before assuming
   continued access is fine.
